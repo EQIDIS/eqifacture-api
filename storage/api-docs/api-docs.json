@@ -19,10 +19,10 @@
         "/api/v1/cfdis/query": {
             "post": {
                 "tags": [
-                    "CFDIs"
+                    "CFDIs (Scraping)"
                 ],
-                "summary": "Query CFDIs from SAT",
-                "description": "Authenticates with FIEL and queries CFDIs. Returns metadata only, no files.",
+                "summary": "Query CFDIs from SAT (metadata only)",
+                "description": "Authenticates with FIEL and queries CFDIs. Returns metadata only, no files downloaded. Fast and synchronous.",
                 "operationId": "b9db2f36d3f69a80a0251602c8530487",
                 "requestBody": {
                     "required": true,
@@ -38,7 +38,7 @@
                                 ],
                                 "properties": {
                                     "certificate": {
-                                        "description": "FIEL certificate file (.cer)",
+                                        "description": "FIEL certificate file (.cer) - Must be valid FIEL, not CSD",
                                         "type": "string",
                                         "format": "binary"
                                     },
@@ -48,35 +48,43 @@
                                         "format": "binary"
                                     },
                                     "passphrase": {
-                                        "description": "FIEL passphrase",
-                                        "type": "string"
+                                        "description": "FIEL password",
+                                        "type": "string",
+                                        "example": "MySecurePassword123"
                                     },
                                     "start_date": {
+                                        "description": "Start date for query range",
                                         "type": "string",
                                         "format": "date",
-                                        "example": "2024-01-01"
+                                        "example": "2025-01-01"
                                     },
                                     "end_date": {
+                                        "description": "End date for query range",
                                         "type": "string",
                                         "format": "date",
-                                        "example": "2024-01-31"
+                                        "example": "2025-01-31"
                                     },
                                     "download_type": {
+                                        "description": "Type of CFDIs to query",
                                         "type": "string",
                                         "default": "emitidos",
                                         "enum": [
                                             "emitidos",
-                                            "recibidos"
-                                        ]
+                                            "recibidos",
+                                            "ambos"
+                                        ],
+                                        "example": "emitidos"
                                     },
                                     "state_voucher": {
+                                        "description": "Filter by CFDI status",
                                         "type": "string",
                                         "default": "todos",
                                         "enum": [
                                             "todos",
                                             "vigentes",
                                             "cancelados"
-                                        ]
+                                        ],
+                                        "example": "todos"
                                     }
                                 },
                                 "type": "object"
@@ -86,22 +94,62 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "CFDIs found",
+                        "description": "CFDIs found successfully",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "properties": {
                                         "success": {
-                                            "type": "boolean"
+                                            "type": "boolean",
+                                            "example": true
                                         },
                                         "data": {
                                             "properties": {
                                                 "count": {
-                                                    "type": "integer"
+                                                    "type": "integer",
+                                                    "example": 42
                                                 },
                                                 "cfdis": {
                                                     "type": "array",
                                                     "items": {
+                                                        "properties": {
+                                                            "uuid": {
+                                                                "type": "string",
+                                                                "example": "b456fff2-0e87-465b-83a9-0493469cb153"
+                                                            },
+                                                            "rfc_emisor": {
+                                                                "type": "string",
+                                                                "example": "ABC123456789"
+                                                            },
+                                                            "nombre_emisor": {
+                                                                "type": "string",
+                                                                "example": "Empresa SA de CV"
+                                                            },
+                                                            "rfc_receptor": {
+                                                                "type": "string",
+                                                                "example": "XYZ987654321"
+                                                            },
+                                                            "total": {
+                                                                "type": "string",
+                                                                "example": "$4,029.98"
+                                                            },
+                                                            "fecha_emision": {
+                                                                "type": "string",
+                                                                "example": "2025-01-15T11:40:34"
+                                                            },
+                                                            "estado_comprobante": {
+                                                                "type": "string",
+                                                                "example": "Vigente"
+                                                            },
+                                                            "has_xml": {
+                                                                "type": "boolean",
+                                                                "example": true
+                                                            },
+                                                            "has_pdf": {
+                                                                "type": "boolean",
+                                                                "example": true
+                                                            }
+                                                        },
                                                         "type": "object"
                                                     }
                                                 }
@@ -126,10 +174,10 @@
         "/api/v1/cfdis/download": {
             "post": {
                 "tags": [
-                    "CFDIs"
+                    "CFDIs (Scraping)"
                 ],
-                "summary": "Download CFDIs from SAT",
-                "description": "Authenticates with FIEL, queries and downloads CFDIs. Returns XML/PDF content directly.",
+                "summary": "Download CFDIs from SAT (returns Base64 files)",
+                "description": "Authenticates with FIEL, queries and downloads CFDIs. Returns XML/PDF content directly as Base64. Fast and synchronous.",
                 "operationId": "222adf47cdf67bfb4574d66d9891e7a2",
                 "requestBody": {
                     "required": true,
@@ -145,33 +193,45 @@
                                 ],
                                 "properties": {
                                     "certificate": {
+                                        "description": "FIEL certificate file (.cer)",
                                         "type": "string",
                                         "format": "binary"
                                     },
                                     "private_key": {
+                                        "description": "FIEL private key file (.key)",
                                         "type": "string",
                                         "format": "binary"
                                     },
                                     "passphrase": {
+                                        "description": "FIEL password",
                                         "type": "string"
                                     },
                                     "start_date": {
+                                        "description": "Start date",
                                         "type": "string",
-                                        "format": "date"
+                                        "format": "date",
+                                        "example": "2025-01-01"
                                     },
                                     "end_date": {
+                                        "description": "End date",
                                         "type": "string",
-                                        "format": "date"
+                                        "format": "date",
+                                        "example": "2025-01-31"
                                     },
                                     "download_type": {
+                                        "description": "Type of CFDIs to download",
                                         "type": "string",
+                                        "default": "emitidos",
                                         "enum": [
                                             "emitidos",
-                                            "recibidos"
+                                            "recibidos",
+                                            "ambos"
                                         ]
                                     },
                                     "state_voucher": {
+                                        "description": "Filter by status",
                                         "type": "string",
+                                        "default": "todos",
                                         "enum": [
                                             "todos",
                                             "vigentes",
@@ -179,14 +239,25 @@
                                         ]
                                     },
                                     "resource_types": {
-                                        "description": "Comma-separated: xml,pdf",
+                                        "description": "Comma-separated resource types to download",
                                         "type": "string",
-                                        "example": "xml"
+                                        "default": "xml",
+                                        "enum": [
+                                            "xml",
+                                            "pdf",
+                                            "xml,pdf",
+                                            "cancel_request",
+                                            "cancel_voucher"
+                                        ],
+                                        "example": "xml,pdf"
                                     },
                                     "max_results": {
-                                        "description": "Limit results",
+                                        "description": "Maximum number of CFDIs to download (1-500)",
                                         "type": "integer",
-                                        "default": 100
+                                        "default": 100,
+                                        "maximum": 500,
+                                        "minimum": 1,
+                                        "example": 100
                                     }
                                 },
                                 "type": "object"
@@ -196,32 +267,40 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "Files downloaded",
+                        "description": "Files downloaded successfully",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "properties": {
                                         "success": {
-                                            "type": "boolean"
+                                            "type": "boolean",
+                                            "example": true
                                         },
                                         "data": {
                                             "properties": {
                                                 "count": {
-                                                    "type": "integer"
+                                                    "type": "integer",
+                                                    "example": 15
                                                 },
                                                 "files": {
                                                     "type": "array",
                                                     "items": {
                                                         "properties": {
                                                             "uuid": {
-                                                                "type": "string"
+                                                                "type": "string",
+                                                                "example": "b456fff2-0e87-465b-83a9-0493469cb153"
                                                             },
                                                             "type": {
-                                                                "type": "string"
+                                                                "type": "string",
+                                                                "example": "xml"
                                                             },
                                                             "content": {
-                                                                "description": "Base64 encoded",
+                                                                "description": "Base64 encoded file content",
                                                                 "type": "string"
+                                                            },
+                                                            "size": {
+                                                                "type": "integer",
+                                                                "example": 15234
                                                             },
                                                             "metadata": {
                                                                 "type": "object"
@@ -238,6 +317,12 @@
                                 }
                             }
                         }
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
+                    },
+                    "422": {
+                        "description": "Validation error"
                     }
                 }
             }
@@ -245,10 +330,10 @@
         "/api/v1/cfdis/download-by-uuid": {
             "post": {
                 "tags": [
-                    "CFDIs"
+                    "CFDIs (Scraping)"
                 ],
                 "summary": "Download specific CFDIs by UUID",
-                "description": "Download specific CFDIs by their UUIDs",
+                "description": "Download specific CFDIs by their UUIDs. Useful when you already know which CFDIs you need.",
                 "operationId": "cba06370532e8a48bc6bce7a59007028",
                 "requestBody": {
                     "required": true,
@@ -264,29 +349,44 @@
                                 ],
                                 "properties": {
                                     "certificate": {
+                                        "description": "FIEL certificate file (.cer)",
                                         "type": "string",
                                         "format": "binary"
                                     },
                                     "private_key": {
+                                        "description": "FIEL private key file (.key)",
                                         "type": "string",
                                         "format": "binary"
                                     },
                                     "passphrase": {
+                                        "description": "FIEL password",
                                         "type": "string"
                                     },
                                     "uuids": {
-                                        "description": "Comma-separated UUIDs",
-                                        "type": "string"
+                                        "description": "Comma-separated list of UUIDs to download",
+                                        "type": "string",
+                                        "example": "b456fff2-0e87-465b-83a9-0493469cb153,a123bcd4-5678-90ef-ghij-klmnopqrstuv"
                                     },
                                     "download_type": {
+                                        "description": "Specify if UUIDs are from emitidos or recibidos. Note: \"ambos\" is NOT supported for UUID downloads.",
                                         "type": "string",
                                         "enum": [
                                             "emitidos",
                                             "recibidos"
-                                        ]
+                                        ],
+                                        "example": "emitidos"
                                     },
                                     "resource_types": {
+                                        "description": "Comma-separated resource types",
                                         "type": "string",
+                                        "default": "xml",
+                                        "enum": [
+                                            "xml",
+                                            "pdf",
+                                            "xml,pdf",
+                                            "cancel_request",
+                                            "cancel_voucher"
+                                        ],
                                         "example": "xml,pdf"
                                     }
                                 },
@@ -297,7 +397,470 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "Files downloaded"
+                        "description": "Files downloaded successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean",
+                                            "example": true
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "count": {
+                                                    "type": "integer"
+                                                },
+                                                "files": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
+                    }
+                }
+            }
+        },
+        "/api/v1/ws/solicitar": {
+            "post": {
+                "tags": [
+                    "WebService (Descarga Masiva)"
+                ],
+                "summary": "Step 1: Create massive download request",
+                "description": "Initiates a download request with SAT WebService. Returns request_id for verification. If download_type is \"ambos\", returns two request_ids (one for emitidos, one for recibidos). Process can take minutes to 72 hours.",
+                "operationId": "a0f0b49899827e891b2f8a652ad5fb51",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "start_date",
+                                    "end_date"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "description": "FIEL certificate file (.cer) - Must be valid FIEL, not CSD",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "description": "FIEL private key file (.key)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "description": "FIEL password",
+                                        "type": "string",
+                                        "example": "MySecurePassword123"
+                                    },
+                                    "start_date": {
+                                        "description": "Start date and time. Format: Y-m-d H:i:s. Must be at least 2 seconds before end_date.",
+                                        "type": "string",
+                                        "format": "date-time",
+                                        "example": "2025-01-01 00:00:00"
+                                    },
+                                    "end_date": {
+                                        "description": "End date and time. Format: Y-m-d H:i:s",
+                                        "type": "string",
+                                        "format": "date-time",
+                                        "example": "2025-01-31 23:59:59"
+                                    },
+                                    "download_type": {
+                                        "description": "Type of CFDIs to download. \"ambos\" creates two separate requests.",
+                                        "type": "string",
+                                        "default": "recibidos",
+                                        "enum": [
+                                            "emitidos",
+                                            "recibidos",
+                                            "ambos"
+                                        ],
+                                        "example": "emitidos"
+                                    },
+                                    "request_type": {
+                                        "description": "Request type: \"cfdi\" for actual XML files, \"metadata\" for metadata only (faster)",
+                                        "type": "string",
+                                        "default": "cfdi",
+                                        "enum": [
+                                            "cfdi",
+                                            "metadata"
+                                        ],
+                                        "example": "cfdi"
+                                    },
+                                    "service_type": {
+                                        "description": "Service type: regular CFDI or CFDI de Retenciones",
+                                        "type": "string",
+                                        "default": "cfdi",
+                                        "enum": [
+                                            "cfdi",
+                                            "retenciones"
+                                        ],
+                                        "example": "cfdi"
+                                    },
+                                    "document_status": {
+                                        "description": "Filter by document status. Note: SAT requires \"vigentes\" for recibidos+cfdi downloads.",
+                                        "type": "string",
+                                        "enum": [
+                                            "vigentes",
+                                            "cancelados"
+                                        ],
+                                        "example": "vigentes",
+                                        "nullable": true
+                                    },
+                                    "document_type": {
+                                        "description": "Filter by document type",
+                                        "type": "string",
+                                        "enum": [
+                                            "ingreso",
+                                            "egreso",
+                                            "traslado",
+                                            "nomina",
+                                            "pago"
+                                        ],
+                                        "example": "ingreso",
+                                        "nullable": true
+                                    },
+                                    "complemento": {
+                                        "description": "Filter by complemento. Available options: pagos10, pagos20, aerolineas10, cartaporte10, cartaporte20, cartaporte30, cartaporte31, comercioexterior10, comercioexterior11, comercioexterior20, donat10, donat11, gastoshidrocarburos10, ine11, ingresoshidrocarburos10, leyendasfisc10, nomina11, nomina12, notariospublicos10, obraimp10, pfic10, renovyvehsam10, servicioparcialdeconstruccion10, turista10, venta10",
+                                        "type": "string",
+                                        "example": "pagos20",
+                                        "nullable": true
+                                    },
+                                    "rfc_match": {
+                                        "description": "Filter by RFC counterpart (12-13 chars). For emitidos: filters by receptor. For recibidos: filters by emisor.",
+                                        "type": "string",
+                                        "example": "XAXX010101000",
+                                        "nullable": true
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Request accepted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean",
+                                            "example": true
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "request_id": {
+                                                    "description": "Request ID for single type downloads",
+                                                    "type": "string",
+                                                    "example": "447a3fd4-8409-4ceb-9bdd-82e51bef37bb"
+                                                },
+                                                "request_ids": {
+                                                    "description": "Request IDs when download_type=ambos",
+                                                    "properties": {
+                                                        "emitidos": {
+                                                            "type": "string"
+                                                        },
+                                                        "recibidos": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "type": "object"
+                                                },
+                                                "status": {
+                                                    "type": "string",
+                                                    "example": "accepted"
+                                                },
+                                                "message": {
+                                                    "type": "string",
+                                                    "example": "Solicitud Aceptada"
+                                                }
+                                            },
+                                            "type": "object"
+                                        },
+                                        "messages": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error or SAT rejected request"
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
+                    }
+                }
+            }
+        },
+        "/api/v1/ws/verificar": {
+            "post": {
+                "tags": [
+                    "WebService (Descarga Masiva)"
+                ],
+                "summary": "Step 2: Check download request status",
+                "description": "Polls SAT to check if the download request is ready. When status is \"finished\", package_ids will be available for download. You should poll this endpoint periodically (every 1-5 minutes recommended).",
+                "operationId": "2a5989bca3e9e898602fb2a001f2383a",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "request_id"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "description": "FIEL certificate file (.cer)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "description": "FIEL private key file (.key)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "description": "FIEL password",
+                                        "type": "string"
+                                    },
+                                    "request_id": {
+                                        "description": "Request ID obtained from solicitar endpoint",
+                                        "type": "string",
+                                        "example": "447a3fd4-8409-4ceb-9bdd-82e51bef37bb"
+                                    },
+                                    "service_type": {
+                                        "description": "Must match the service_type used in solicitar",
+                                        "type": "string",
+                                        "default": "cfdi",
+                                        "enum": [
+                                            "cfdi",
+                                            "retenciones"
+                                        ],
+                                        "example": "cfdi"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Status retrieved successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean",
+                                            "example": true
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "status": {
+                                                    "description": "Current request status. \"finished\" means packages are ready.",
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "accepted",
+                                                        "in_progress",
+                                                        "finished",
+                                                        "failure",
+                                                        "rejected",
+                                                        "expired"
+                                                    ],
+                                                    "example": "finished"
+                                                },
+                                                "message": {
+                                                    "type": "string",
+                                                    "example": "Solicitud Aceptada"
+                                                },
+                                                "package_ids": {
+                                                    "description": "Package IDs for download (only when status=finished)",
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "string"
+                                                    },
+                                                    "example": [
+                                                        "ABC123_01",
+                                                        "ABC123_02"
+                                                    ]
+                                                },
+                                                "count": {
+                                                    "description": "Number of packages",
+                                                    "type": "integer",
+                                                    "example": 2
+                                                },
+                                                "cfdi_count": {
+                                                    "description": "Total CFDIs found",
+                                                    "type": "integer",
+                                                    "example": 150
+                                                }
+                                            },
+                                            "type": "object"
+                                        },
+                                        "messages": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Verification failed"
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
+                    }
+                }
+            }
+        },
+        "/api/v1/ws/descargar": {
+            "post": {
+                "tags": [
+                    "WebService (Descarga Masiva)"
+                ],
+                "summary": "Step 3: Download ready packages",
+                "description": "Downloads the ZIP packages containing XMLs. Each package is returned as Base64-encoded content. You must decode the Base64 content to get the ZIP file.",
+                "operationId": "036f06e4b1a126478b11a6062dc29642",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "package_ids"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "description": "FIEL certificate file (.cer)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "description": "FIEL private key file (.key)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "description": "FIEL password",
+                                        "type": "string"
+                                    },
+                                    "package_ids": {
+                                        "description": "Comma-separated package IDs obtained from verificar endpoint",
+                                        "type": "string",
+                                        "example": "447A3FD4-8409-4CEB-9BDD-82E51BEF37BB_01,447A3FD4-8409-4CEB-9BDD-82E51BEF37BB_02"
+                                    },
+                                    "service_type": {
+                                        "description": "Must match the service_type used in solicitar",
+                                        "type": "string",
+                                        "default": "cfdi",
+                                        "enum": [
+                                            "cfdi",
+                                            "retenciones"
+                                        ],
+                                        "example": "cfdi"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Packages downloaded successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean",
+                                            "example": true
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "count": {
+                                                    "type": "integer",
+                                                    "example": 2
+                                                },
+                                                "packages": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "properties": {
+                                                            "package_id": {
+                                                                "type": "string",
+                                                                "example": "447A3FD4-8409-4CEB-9BDD-82E51BEF37BB_01"
+                                                            },
+                                                            "content_base64": {
+                                                                "description": "Base64-encoded ZIP file. Decode this to get the ZIP containing XML files.",
+                                                                "type": "string"
+                                                            },
+                                                            "size": {
+                                                                "description": "Size in bytes",
+                                                                "type": "integer",
+                                                                "example": 16111
+                                                            },
+                                                            "format": {
+                                                                "type": "string",
+                                                                "example": "zip"
+                                                            }
+                                                        },
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            },
+                                            "type": "object"
+                                        },
+                                        "messages": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Download failed"
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
                     }
                 }
             }
@@ -305,8 +868,12 @@
     },
     "tags": [
         {
-            "name": "CFDIs",
-            "description": "Stateless CFDI proxy operations"
+            "name": "CFDIs (Scraping)",
+            "description": "Synchronous CFDI operations via web scraping. Fast, ideal for <500 CFDIs."
+        },
+        {
+            "name": "WebService (Descarga Masiva)",
+            "description": "SAT official WebService for massive asynchronous CFDI downloads. Supports up to 200k CFDIs per request. Process can take minutes to 72 hours."
         }
     ]
 }

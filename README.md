@@ -5,19 +5,34 @@
 ## Key Features
 
 - ✅ **Stateless** - No data stored, no database
-- ✅ **Synchronous** - All operations return immediately
+- ✅ **Two Methods** - Scraping (fast, sync) + WebService (massive, async)
 - ✅ **Direct Response** - XML/PDF content returned in JSON (Base64)
 - ✅ **No Auth Required** - FIEL sent in each request
 - ✅ **Scalable** - Horizontally scale with Docker
 
 ## API Endpoints
 
+### Scraping (Synchronous, fast, <500 CFDIs)
+
 | Method | Endpoint                         | Description                  |
 | ------ | -------------------------------- | ---------------------------- |
 | POST   | `/api/v1/cfdis/query`            | Query CFDIs (metadata only)  |
 | POST   | `/api/v1/cfdis/download`         | Download CFDIs by date range |
 | POST   | `/api/v1/cfdis/download-by-uuid` | Download specific CFDIs      |
-| GET    | `/api/v1/health`                 | Health check                 |
+
+### WebService (Asynchronous, up to 200k CFDIs)
+
+| Method | Endpoint               | Description                             |
+| ------ | ---------------------- | --------------------------------------- |
+| POST   | `/api/v1/ws/solicitar` | Create download request → `request_id`  |
+| POST   | `/api/v1/ws/verificar` | Check status → `package_ids` when ready |
+| POST   | `/api/v1/ws/descargar` | Download packages (ZIP with XMLs)       |
+
+### Health
+
+| Method | Endpoint         | Description  |
+| ------ | ---------------- | ------------ |
+| GET    | `/api/v1/health` | Health check |
 
 ## 🚀 Cómo Correr la API
 
@@ -141,7 +156,7 @@ Consideraciones para Opción 3:
 
 ---
 
-## Python SDK Example
+## Python SDK Example (Scraping)
 
 ```python
 import requests
@@ -241,6 +256,142 @@ if nuevos:
 
         print(f"✓ {uuid}: ${metadata['total']}")
 ```
+
+---
+
+## WebService SDK Example (Massive Downloads)
+
+⚠️ **El WebService es ASÍNCRONO** - puede tardar de minutos a 72 horas.
+
+```python
+import requests
+import base64
+import time
+import zipfile
+import io
+
+class SatWebServiceDownloader:
+    """Cliente Python para WebService del SAT (Descarga Masiva)"""
+
+    def __init__(self, api_url, cert_path, key_path, passphrase):
+        self.api_url = api_url
+        self.cert_path = cert_path
+        self.key_path = key_path
+        self.passphrase = passphrase
+
+    def _get_files(self):
+        return {
+            "certificate": open(self.cert_path, "rb"),
+            "private_key": open(self.key_path, "rb"),
+        }
+
+    def solicitar(self, start_date, end_date, download_type="recibidos",
+                  service_type="cfdi", request_type="cfdi"):
+        """Paso 1: Crear solicitud de descarga masiva"""
+        response = requests.post(
+            f"{self.api_url}/ws/solicitar",
+            files=self._get_files(),
+            data={
+                "passphrase": self.passphrase,
+                "start_date": start_date,
+                "end_date": end_date,
+                "download_type": download_type,
+                "service_type": service_type,
+                "request_type": request_type,
+            }
+        )
+        result = response.json()
+        if not result["success"]:
+            raise Exception(f"Error: {result.get('errors')}")
+        return result["data"]["request_id"]
+
+    def verificar(self, request_id, service_type="cfdi"):
+        """Paso 2: Verificar estado de la solicitud"""
+        response = requests.post(
+            f"{self.api_url}/ws/verificar",
+            files=self._get_files(),
+            data={
+                "passphrase": self.passphrase,
+                "request_id": request_id,
+                "service_type": service_type,
+            }
+        )
+        return response.json()["data"]
+
+    def descargar(self, package_ids, service_type="cfdi"):
+        """Paso 3: Descargar paquetes (ZIPs con XMLs)"""
+        response = requests.post(
+            f"{self.api_url}/ws/descargar",
+            files=self._get_files(),
+            data={
+                "passphrase": self.passphrase,
+                "package_ids": ",".join(package_ids),
+                "service_type": service_type,
+            }
+        )
+        return response.json()["data"]["packages"]
+
+    def download_with_polling(self, start_date, end_date, poll_interval=300):
+        """Helper: Descarga completa con polling automático"""
+        # 1. Solicitar
+        request_id = self.solicitar(start_date, end_date)
+        print(f"📋 Solicitud creada: {request_id}")
+
+        # 2. Polling hasta que esté listo
+        while True:
+            result = self.verificar(request_id)
+            status = result["status"]
+            print(f"⏳ Estado: {status}")
+
+            if status == "finished":
+                break
+            elif status in ["failure", "rejected", "expired"]:
+                raise Exception(f"Solicitud falló: {result['message']}")
+
+            print(f"   Esperando {poll_interval}s...")
+            time.sleep(poll_interval)
+
+        # 3. Descargar paquetes
+        package_ids = result["package_ids"]
+        print(f"📦 Descargando {len(package_ids)} paquetes...")
+        return self.descargar(package_ids)
+
+
+# ============ USO COMPLETO ============
+
+ws_downloader = SatWebServiceDownloader(
+    api_url="http://localhost:8000/api/v1",
+    cert_path="/path/to/fiel.cer",
+    key_path="/path/to/fiel.key",
+    passphrase="Tu-Password"
+)
+
+# Descargar TODO un año (hasta 200k CFDIs)
+packages = ws_downloader.download_with_polling(
+    start_date="2025-01-01 00:00:00",
+    end_date="2025-12-31 23:59:59",
+    poll_interval=300  # Verificar cada 5 minutos
+)
+
+# Procesar cada paquete (ZIP con XMLs)
+for pkg in packages:
+    zip_content = base64.b64decode(pkg["content_base64"])
+
+    with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+        for xml_name in zf.namelist():
+            xml_content = zf.read(xml_name)
+            print(f"✓ Extraído: {xml_name}")
+            # Procesar XML...
+```
+
+### ¿Cuándo usar cada método?
+
+| Escenario                    | Método         | Endpoint Prefix |
+| ---------------------------- | -------------- | --------------- |
+| Consultas diarias (<500)     | **Scraping**   | `/cfdis/*`      |
+| Descarga masiva (>500, años) | **WebService** | `/ws/*`         |
+| Necesito respuesta inmediata | **Scraping**   | `/cfdis/*`      |
+| Solo Metadata (sin XMLs)     | **WebService** | `/ws/*`         |
 
 ---
 

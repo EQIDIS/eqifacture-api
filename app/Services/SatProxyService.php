@@ -107,6 +107,7 @@ class SatProxyService
 
     /**
      * Query CFDIs and return metadata as array
+     * Supports 'emitidos', 'recibidos', or 'ambos' (makes two queries)
      */
     public function queryByDateRange(
         string $startDate,
@@ -123,34 +124,56 @@ class SatProxyService
             $since = new DateTimeImmutable($startDate);
             $until = new DateTimeImmutable($endDate);
 
-            $query = new QueryByFilters($since, $until);
-
-            if ($downloadType === 'recibidos') {
-                $query->setDownloadType(DownloadType::recibidos());
-            } else {
-                $query->setDownloadType(DownloadType::emitidos());
+            // Handle 'ambos' by making two queries
+            if ($downloadType === 'ambos') {
+                $emitidos = $this->querySingleType($since, $until, 'emitidos', $stateVoucher);
+                $recibidos = $this->querySingleType($since, $until, 'recibidos', $stateVoucher);
+                
+                $combined = array_merge($emitidos ?? [], $recibidos ?? []);
+                $this->messages[] = "Found " . count($combined) . " CFDIs (emitidos + recibidos)";
+                return $combined;
             }
 
-            switch ($stateVoucher) {
-                case 'vigentes':
-                    $query->setStateVoucher(StatesVoucherOption::vigentes());
-                    break;
-                case 'cancelados':
-                    $query->setStateVoucher(StatesVoucherOption::cancelados());
-                    break;
-                default:
-                    $query->setStateVoucher(StatesVoucherOption::todos());
-            }
-
-            $list = $this->scraper->listByPeriod($query);
-            $this->messages[] = "Found {$list->count()} CFDIs";
-            
-            return $this->metadataToArray($list);
+            return $this->querySingleType($since, $until, $downloadType, $stateVoucher);
         } catch (Exception $e) {
             $this->errors[] = 'Query error: ' . $e->getMessage();
             Log::error('SAT Proxy Query Error', ['error' => $e->getMessage()]);
             return null;
         }
+    }
+
+    /**
+     * Query a single download type (emitidos or recibidos)
+     */
+    private function querySingleType(
+        DateTimeImmutable $since,
+        DateTimeImmutable $until,
+        string $downloadType,
+        string $stateVoucher
+    ): ?array {
+        $query = new QueryByFilters($since, $until);
+
+        if ($downloadType === 'recibidos') {
+            $query->setDownloadType(DownloadType::recibidos());
+        } else {
+            $query->setDownloadType(DownloadType::emitidos());
+        }
+
+        switch ($stateVoucher) {
+            case 'vigentes':
+                $query->setStateVoucher(StatesVoucherOption::vigentes());
+                break;
+            case 'cancelados':
+                $query->setStateVoucher(StatesVoucherOption::cancelados());
+                break;
+            default:
+                $query->setStateVoucher(StatesVoucherOption::todos());
+        }
+
+        $list = $this->scraper->listByPeriod($query);
+        $this->messages[] = "Found {$list->count()} CFDIs ({$downloadType})";
+        
+        return $this->metadataToArray($list);
     }
 
     /**
@@ -170,45 +193,68 @@ class SatProxyService
         }
 
         try {
-            // First, query to get the list
             $since = new DateTimeImmutable($startDate);
             $until = new DateTimeImmutable($endDate);
 
-            $query = new QueryByFilters($since, $until);
-
-            if ($downloadType === 'recibidos') {
-                $query->setDownloadType(DownloadType::recibidos());
-            } else {
-                $query->setDownloadType(DownloadType::emitidos());
+            // Handle 'ambos' by making two queries
+            if ($downloadType === 'ambos') {
+                $emitidos = $this->downloadSingleType($since, $until, 'emitidos', $stateVoucher, $resourceTypes, $maxResults);
+                $recibidos = $this->downloadSingleType($since, $until, 'recibidos', $stateVoucher, $resourceTypes, $maxResults);
+                
+                $combined = array_merge($emitidos ?? [], $recibidos ?? []);
+                $this->messages[] = "Downloaded " . count($combined) . " files (emitidos + recibidos)";
+                return $combined;
             }
 
-            switch ($stateVoucher) {
-                case 'vigentes':
-                    $query->setStateVoucher(StatesVoucherOption::vigentes());
-                    break;
-                case 'cancelados':
-                    $query->setStateVoucher(StatesVoucherOption::cancelados());
-                    break;
-                default:
-                    $query->setStateVoucher(StatesVoucherOption::todos());
-            }
-
-            $list = $this->scraper->listByPeriod($query);
-            
-            // Limit results
-            $limitedList = $this->limitMetadataList($list, $maxResults);
-            
-            // Ensure session is alive before downloading
-            $this->scraper->confirmSessionIsAlive();
-            
-            // Download each resource type and collect contents
-            return $this->downloadToMemory($limitedList, $resourceTypes);
+            return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes, $maxResults);
             
         } catch (Exception $e) {
             $this->errors[] = 'Download error: ' . $e->getMessage();
             Log::error('SAT Proxy Download Error', ['error' => $e->getMessage()]);
             return null;
         }
+    }
+
+    /**
+     * Download a single download type (emitidos or recibidos)
+     */
+    private function downloadSingleType(
+        DateTimeImmutable $since,
+        DateTimeImmutable $until,
+        string $downloadType,
+        string $stateVoucher,
+        array $resourceTypes,
+        int $maxResults
+    ): ?array {
+        $query = new QueryByFilters($since, $until);
+
+        if ($downloadType === 'recibidos') {
+            $query->setDownloadType(DownloadType::recibidos());
+        } else {
+            $query->setDownloadType(DownloadType::emitidos());
+        }
+
+        switch ($stateVoucher) {
+            case 'vigentes':
+                $query->setStateVoucher(StatesVoucherOption::vigentes());
+                break;
+            case 'cancelados':
+                $query->setStateVoucher(StatesVoucherOption::cancelados());
+                break;
+            default:
+                $query->setStateVoucher(StatesVoucherOption::todos());
+        }
+
+        $list = $this->scraper->listByPeriod($query);
+        
+        // Limit results
+        $limitedList = $this->limitMetadataList($list, $maxResults);
+        
+        // Ensure session is alive before downloading
+        $this->scraper->confirmSessionIsAlive();
+        
+        // Download each resource type and collect contents
+        return $this->downloadToMemory($limitedList, $resourceTypes);
     }
 
     /**
