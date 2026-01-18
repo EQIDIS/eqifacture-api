@@ -1,0 +1,312 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "EqiFacture SAT CFDI Proxy API",
+        "description": "Stateless proxy API for downloading CFDIs from SAT portal. No data stored.",
+        "contact": {
+            "name": "API Support",
+            "email": "support@eqifacture.com"
+        },
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "/api/v1",
+            "description": "API Server"
+        }
+    ],
+    "paths": {
+        "/api/v1/cfdis/query": {
+            "post": {
+                "tags": [
+                    "CFDIs"
+                ],
+                "summary": "Query CFDIs from SAT",
+                "description": "Authenticates with FIEL and queries CFDIs. Returns metadata only, no files.",
+                "operationId": "b9db2f36d3f69a80a0251602c8530487",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "start_date",
+                                    "end_date"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "description": "FIEL certificate file (.cer)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "description": "FIEL private key file (.key)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "description": "FIEL passphrase",
+                                        "type": "string"
+                                    },
+                                    "start_date": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "example": "2024-01-01"
+                                    },
+                                    "end_date": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "example": "2024-01-31"
+                                    },
+                                    "download_type": {
+                                        "type": "string",
+                                        "default": "emitidos",
+                                        "enum": [
+                                            "emitidos",
+                                            "recibidos"
+                                        ]
+                                    },
+                                    "state_voucher": {
+                                        "type": "string",
+                                        "default": "todos",
+                                        "enum": [
+                                            "todos",
+                                            "vigentes",
+                                            "cancelados"
+                                        ]
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "CFDIs found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean"
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "count": {
+                                                    "type": "integer"
+                                                },
+                                                "cfdis": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "FIEL authentication failed"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/api/v1/cfdis/download": {
+            "post": {
+                "tags": [
+                    "CFDIs"
+                ],
+                "summary": "Download CFDIs from SAT",
+                "description": "Authenticates with FIEL, queries and downloads CFDIs. Returns XML/PDF content directly.",
+                "operationId": "222adf47cdf67bfb4574d66d9891e7a2",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "start_date",
+                                    "end_date"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "type": "string"
+                                    },
+                                    "start_date": {
+                                        "type": "string",
+                                        "format": "date"
+                                    },
+                                    "end_date": {
+                                        "type": "string",
+                                        "format": "date"
+                                    },
+                                    "download_type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "emitidos",
+                                            "recibidos"
+                                        ]
+                                    },
+                                    "state_voucher": {
+                                        "type": "string",
+                                        "enum": [
+                                            "todos",
+                                            "vigentes",
+                                            "cancelados"
+                                        ]
+                                    },
+                                    "resource_types": {
+                                        "description": "Comma-separated: xml,pdf",
+                                        "type": "string",
+                                        "example": "xml"
+                                    },
+                                    "max_results": {
+                                        "description": "Limit results",
+                                        "type": "integer",
+                                        "default": 100
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Files downloaded",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean"
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "count": {
+                                                    "type": "integer"
+                                                },
+                                                "files": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "properties": {
+                                                            "uuid": {
+                                                                "type": "string"
+                                                            },
+                                                            "type": {
+                                                                "type": "string"
+                                                            },
+                                                            "content": {
+                                                                "description": "Base64 encoded",
+                                                                "type": "string"
+                                                            },
+                                                            "metadata": {
+                                                                "type": "object"
+                                                            }
+                                                        },
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/cfdis/download-by-uuid": {
+            "post": {
+                "tags": [
+                    "CFDIs"
+                ],
+                "summary": "Download specific CFDIs by UUID",
+                "description": "Download specific CFDIs by their UUIDs",
+                "operationId": "cba06370532e8a48bc6bce7a59007028",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "certificate",
+                                    "private_key",
+                                    "passphrase",
+                                    "uuids",
+                                    "download_type"
+                                ],
+                                "properties": {
+                                    "certificate": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "private_key": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "passphrase": {
+                                        "type": "string"
+                                    },
+                                    "uuids": {
+                                        "description": "Comma-separated UUIDs",
+                                        "type": "string"
+                                    },
+                                    "download_type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "emitidos",
+                                            "recibidos"
+                                        ]
+                                    },
+                                    "resource_types": {
+                                        "type": "string",
+                                        "example": "xml,pdf"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Files downloaded"
+                    }
+                }
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "CFDIs",
+            "description": "Stateless CFDI proxy operations"
+        }
+    ]
+}
