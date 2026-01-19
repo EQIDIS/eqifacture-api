@@ -28,6 +28,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\Cors::class,
             \App\Http\Middleware\ApiLogger::class,
         ]);
+
+        // Trust all proxies (standard for containerized deployments like Coolify/Dokploy)
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Handle rate limit exceeded
