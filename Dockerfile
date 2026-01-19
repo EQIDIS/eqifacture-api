@@ -42,11 +42,18 @@ COPY . .
 # Install dependencies
 RUN composer install --no-dev --optimize-autoloader
 
+# Create storage directories for Swagger docs
+RUN mkdir -p /var/www/html/storage/api-docs
+
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+
+# Generate Swagger docs and cache configs (uses default .env or build args)
+# Note: These will be re-cached at runtime with proper env if needed
+RUN php artisan l5-swagger:generate || true
 
 # Expose port
 EXPOSE 8000
 
-# Start command
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+# Start command with optimizations
+CMD php artisan config:cache && php artisan route:cache && php artisan serve --host=0.0.0.0 --port=8000
