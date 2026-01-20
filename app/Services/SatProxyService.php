@@ -184,8 +184,7 @@ class SatProxyService
         string $endDate,
         string $downloadType,
         string $stateVoucher,
-        array $resourceTypes,
-        int $maxResults = 100
+        array $resourceTypes
     ): ?array {
         if ($this->scraper === null) {
             $this->errors[] = 'Not authenticated';
@@ -198,15 +197,15 @@ class SatProxyService
 
             // Handle 'ambos' by making two queries
             if ($downloadType === 'ambos') {
-                $emitidos = $this->downloadSingleType($since, $until, 'emitidos', $stateVoucher, $resourceTypes, $maxResults);
-                $recibidos = $this->downloadSingleType($since, $until, 'recibidos', $stateVoucher, $resourceTypes, $maxResults);
+                $emitidos = $this->downloadSingleType($since, $until, 'emitidos', $stateVoucher, $resourceTypes);
+                $recibidos = $this->downloadSingleType($since, $until, 'recibidos', $stateVoucher, $resourceTypes);
                 
                 $combined = array_merge($emitidos ?? [], $recibidos ?? []);
                 $this->messages[] = "Downloaded " . count($combined) . " files (emitidos + recibidos)";
                 return $combined;
             }
 
-            return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes, $maxResults);
+            return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes);
             
         } catch (Exception $e) {
             $this->errors[] = 'Download error: ' . $e->getMessage();
@@ -223,8 +222,7 @@ class SatProxyService
         DateTimeImmutable $until,
         string $downloadType,
         string $stateVoucher,
-        array $resourceTypes,
-        int $maxResults
+        array $resourceTypes
     ): ?array {
         $query = new QueryByFilters($since, $until);
 
@@ -246,15 +244,13 @@ class SatProxyService
         }
 
         $list = $this->scraper->listByPeriod($query);
-        
-        // Limit results
-        $limitedList = $this->limitMetadataList($list, $maxResults);
+        $this->messages[] = "Found {$list->count()} CFDIs ({$downloadType}) - downloading all";
         
         // Ensure session is alive before downloading
         $this->scraper->confirmSessionIsAlive();
         
-        // Download each resource type and collect contents
-        return $this->downloadToMemory($limitedList, $resourceTypes);
+        // Download each resource type and collect contents - NO LIMITS
+        return $this->downloadToMemory($list, $resourceTypes);
     }
 
     /**
@@ -333,25 +329,6 @@ class SatProxyService
         $this->messages[] = "Downloaded " . count($files) . " files";
         
         return $files;
-    }
-
-    /**
-     * Limit MetadataList to max results
-     */
-    private function limitMetadataList(MetadataList $list, int $max): MetadataList
-    {
-        $items = [];
-        $count = 0;
-        
-        foreach ($list as $item) {
-            if ($count >= $max) {
-                break;
-            }
-            $items[] = $item;
-            $count++;
-        }
-        
-        return new MetadataList($items);
     }
 
     /**
