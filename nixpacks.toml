@@ -166,6 +166,9 @@ http {
      
         location ~ \.php$ {
             fastcgi_pass 127.0.0.1:9000;
+            fastcgi_read_timeout 600;
+            fastcgi_send_timeout 600;
+            fastcgi_connect_timeout 60;
             fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
             include $!{nginx}/conf/fastcgi_params;
             include $!{nginx}/conf/fastcgi.conf;
