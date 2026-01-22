@@ -31,6 +31,13 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Trust all proxies (standard for containerized deployments like Coolify/Dokploy)
         $middleware->trustProxies(at: '*');
+
+        // Disable trimming for password fields
+        $middleware->trimStrings(except: [
+            'password',
+            'password_confirmation',
+            'passphrase',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Handle rate limit exceeded
