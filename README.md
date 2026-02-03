@@ -525,6 +525,10 @@ class CfdiDownloader(models.Model):
 - ⚠️ Use HTTPS in production
 - ⚠️ Consider IP whitelisting
 
+## Logs
+
+tail -f storage/logs/laravel.log
+
 ## License
 
 MIT

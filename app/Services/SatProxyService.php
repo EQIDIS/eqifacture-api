@@ -20,6 +20,9 @@ use DateTimeImmutable;
 use Exception;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
+use PhpCfdi\CfdiSatScraper\Exceptions\SatHttpGatewayException;
+use PhpCfdi\CfdiSatScraper\Exceptions\LoginException;
+use Throwable;
 
 /**
  * Stateless SAT Proxy Service
@@ -46,6 +49,19 @@ class SatProxyService
             $certificateContent = file_get_contents($certificate->getPathname());
             $privateKeyContent = file_get_contents($privateKey->getPathname());
 
+            return $this->authenticateWithContent($certificateContent, $privateKeyContent, $passphrase);
+        } catch (\Exception $e) {
+            $this->errors[] = 'Error reading credentials: ' . $e->getMessage();
+            return false;
+        }
+    }
+
+    private function authenticateWithContent(
+        string $certificateContent,
+        string $privateKeyContent,
+        string $passphrase
+    ): bool {
+        try {
             $credential = Credential::create($certificateContent, $privateKeyContent, $passphrase);
 
             if (!$credential->isFiel()) {
@@ -93,14 +109,23 @@ class SatProxyService
             
             $this->scraper = new SatScraper($sessionManager, $httpGateway);
             $this->messages[] = 'FIEL authentication successful';
+            Log::info('SAT Proxy: Authentication successful using FIEL');
             
             // Credential contents are now out of scope and will be garbage collected
             // We don't store them anywhere
             
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->errors[] = 'Authentication error: ' . $e->getMessage();
-            Log::error('SAT Proxy Auth Error', ['error' => $e->getMessage()]);
+            
+            $context = ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()];
+            
+            if ($e instanceof SatHttpGatewayException) {
+                // Log the actual HTML response from SAT to see if it's a maintenance page
+                $context['sat_response'] = substr($e->getMessage(), 0, 2000); // Capture potentially truncated message which might contain HTML
+            }
+            
+            Log::error('SAT Proxy Auth Error', $context);
             return false;
         }
     }
@@ -122,7 +147,7 @@ class SatProxyService
 
         try {
             $since = new DateTimeImmutable($startDate);
-            $until = new DateTimeImmutable($endDate);
+            $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
 
             // Handle 'ambos' by making two queries
             if ($downloadType === 'ambos') {
@@ -172,6 +197,10 @@ class SatProxyService
 
         $list = $this->scraper->listByPeriod($query);
         $this->messages[] = "Found {$list->count()} CFDIs ({$downloadType})";
+        Log::info("SAT Proxy: Found {$list->count()} CFDIs ({$downloadType})", [
+            'since' => $since->format('Y-m-d H:i:s'), 
+            'until' => $until->format('Y-m-d H:i:s')
+        ]);
         
         return $this->metadataToArray($list);
     }
@@ -193,7 +222,7 @@ class SatProxyService
 
         try {
             $since = new DateTimeImmutable($startDate);
-            $until = new DateTimeImmutable($endDate);
+            $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
 
             // Handle 'ambos' by making two queries
             if ($downloadType === 'ambos') {
@@ -207,9 +236,16 @@ class SatProxyService
 
             return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes);
             
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->errors[] = 'Download error: ' . $e->getMessage();
-            Log::error('SAT Proxy Download Error', ['error' => $e->getMessage()]);
+            
+            $context = ['error' => $e->getMessage(), 'uuid' => $uuids ?? 'N/A', 'trace' => $e->getTraceAsString()];
+
+             if ($e instanceof SatHttpGatewayException) {
+                $context['sat_response'] = substr($e->getMessage(), 0, 2000);
+            }
+
+            Log::error('SAT Proxy Download Error', $context);
             return null;
         }
     }
@@ -245,6 +281,10 @@ class SatProxyService
 
         $list = $this->scraper->listByPeriod($query);
         $this->messages[] = "Found {$list->count()} CFDIs ({$downloadType}) - downloading all";
+        Log::info("SAT Proxy: Found {$list->count()} CFDIs ({$downloadType}) to download - starting process", [
+            'since' => $since->format('Y-m-d H:i:s'), 
+            'until' => $until->format('Y-m-d H:i:s')
+        ]);
         
         // Ensure session is alive before downloading
         $this->scraper->confirmSessionIsAlive();
@@ -327,6 +367,7 @@ class SatProxyService
         }
 
         $this->messages[] = "Downloaded " . count($files) . " files";
+        Log::info("SAT Proxy: Successfully downloaded " . count($files) . " files");
         
         return $files;
     }
