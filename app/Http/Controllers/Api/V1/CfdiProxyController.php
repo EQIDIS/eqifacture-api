@@ -124,6 +124,9 @@ class CfdiProxyController extends Controller
     )]
     public function query(Request $request): JsonResponse
     {
+        set_time_limit(600);
+        ini_set('memory_limit', '512M');
+
         $validator = Validator::make($request->all(), [
             'certificate' => 'required|file',
             'private_key' => 'required|file',

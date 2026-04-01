@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Composer\CaBundle\CaBundle;
 use GuzzleHttp\Client;
 use GuzzleHttp\RequestOptions;
 use PhpCfdi\CfdiSatScraper\SatScraper;
@@ -93,14 +94,18 @@ class SatProxyService
                 return 1000 * pow(2, $retries);
             }));
 
+            // TLS: SAT / GlobalSign chain often fails with VERIFY=true alone (cURL 60). Match
+            // phpcfdi + Mozilla bundle + GlobalSign OV intermediate (see sat-cfdi-api scraper).
+            $verify = $this->resolveSatTlsVerify();
+
             $client = new Client([
                 'handler' => $stack,
-                RequestOptions::CONNECT_TIMEOUT => 60, // Increased connect timeout
-                RequestOptions::TIMEOUT => 600,        // Increased request timeout for large downloads
-                RequestOptions::VERIFY => true,
+                RequestOptions::CONNECT_TIMEOUT => 90,
+                RequestOptions::TIMEOUT => 600,
+                RequestOptions::HTTP_ERRORS => true,
+                RequestOptions::VERIFY => $verify,
                 'curl' => [
                     CURLOPT_SSL_CIPHER_LIST => 'DEFAULT@SECLEVEL=1',
-                    CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
                 ],
             ]);
 
@@ -128,6 +133,47 @@ class SatProxyService
             Log::error('SAT Proxy Auth Error', $context);
             return false;
         }
+    }
+
+    /**
+     * Guzzle VERIFY: merged Mozilla CA bundle + GlobalSign RSA OV SSL CA 2018 (SAT portal chain).
+     * Set SAT_VERIFY_SSL=0 only for local diagnostics.
+     *
+     * @return bool|string Path to PEM bundle, true for default CAs, or false to skip verify
+     */
+    private function resolveSatTlsVerify(): bool|string
+    {
+        $raw = env('SAT_VERIFY_SSL', getenv('SAT_VERIFY_SSL') ?: '');
+        if ($raw === '0' || strcasecmp((string) $raw, 'false') === 0) {
+            Log::warning('SAT Proxy: SAT_VERIFY_SSL disables TLS verification (diagnostic only)');
+
+            return false;
+        }
+
+        $extra = resource_path('certs/globalsign-rsa-ov-ssl-ca-2018.pem');
+        if (! is_readable($extra)) {
+            Log::notice('SAT Proxy: GlobalSign PEM missing, falling back to default VERIFY', ['path' => $extra]);
+
+            return true;
+        }
+
+        $cacheDir = storage_path('framework');
+        if (! is_dir($cacheDir)) {
+            mkdir($cacheDir, 0755, true);
+        }
+
+        $cachePath = $cacheDir.'/sat_scraper_merged_ca.pem';
+        $mozillaPath = CaBundle::getBundledCaBundlePath();
+        $needRebuild = ! is_readable($cachePath)
+            || @filemtime($cachePath) < @filemtime($extra)
+            || @filemtime($cachePath) < @filemtime($mozillaPath);
+
+        if ($needRebuild) {
+            $merged = file_get_contents($mozillaPath)."\n".file_get_contents($extra);
+            file_put_contents($cachePath, $merged);
+        }
+
+        return $cachePath;
     }
 
     /**
