@@ -38,6 +38,15 @@ class SatProxyService
     private array $messages = [];
 
     /**
+     * FIEL contents kept in memory for the duration of THIS request only, so a
+     * failed scrape can be retried on a different Webshare IP (re-login). Never
+     * persisted to disk/DB — discarded when the request ends.
+     */
+    private ?string $certificateContent = null;
+    private ?string $privateKeyContent = null;
+    private ?string $passphrase = null;
+
+    /**
      * Authenticate with FIEL from uploaded files
      * Credentials are NOT stored - used only for this request
      */
@@ -75,50 +84,16 @@ class SatProxyService
                 return false;
             }
 
-            // Configure Guzzle with SSL workarounds for SAT and Retry Middleware
-            $stack = \GuzzleHttp\HandlerStack::create();
-            $stack->push(\GuzzleHttp\Middleware::retry(function ($retries, $request, $response, $exception) {
-                // Retry on connection errors or 5xx server errors
-                if ($retries >= 3) {
-                    return false;
-                }
-                if ($exception instanceof \GuzzleHttp\Exception\ConnectException) {
-                    return true;
-                }
-                if ($response && $response->getStatusCode() >= 500) {
-                    return true;
-                }
-                return false;
-            }, function ($retries) {
-                // Exponential backoff
-                return 1000 * pow(2, $retries);
-            }));
+            // Keep the FIEL in memory for THIS request so a throttled/failed scrape
+            // can be retried on a different Webshare IP (see withProxyRetry).
+            $this->certificateContent = $certificateContent;
+            $this->privateKeyContent = $privateKeyContent;
+            $this->passphrase = $passphrase;
 
-            // TLS: SAT / GlobalSign chain often fails with VERIFY=true alone (cURL 60). Match
-            // phpcfdi + Mozilla bundle + GlobalSign OV intermediate (see sat-cfdi-api scraper).
-            $verify = $this->resolveSatTlsVerify();
-
-            $client = new Client([
-                'handler' => $stack,
-                RequestOptions::CONNECT_TIMEOUT => 90,
-                RequestOptions::TIMEOUT => 600,
-                RequestOptions::HTTP_ERRORS => true,
-                RequestOptions::VERIFY => $verify,
-                'curl' => [
-                    CURLOPT_SSL_CIPHER_LIST => 'DEFAULT@SECLEVEL=1',
-                ],
-            ]);
-
-            $httpGateway = new SatHttpGateway($client);
-            $sessionManager = FielSessionManager::create($credential);
-            
-            $this->scraper = new SatScraper($sessionManager, $httpGateway);
+            $this->buildScraper($credential);
             $this->messages[] = 'FIEL authentication successful';
             Log::info('SAT Proxy: Authentication successful using FIEL');
-            
-            // Credential contents are now out of scope and will be garbage collected
-            // We don't store them anywhere
-            
+
             return true;
         } catch (Throwable $e) {
             $this->errors[] = 'Authentication error: ' . $e->getMessage();
@@ -133,6 +108,122 @@ class SatProxyService
             Log::error('SAT Proxy Auth Error', $context);
             return false;
         }
+    }
+
+    /**
+     * Build the Guzzle client + SatScraper, routing every request through a
+     * fresh Webshare residential IP (sticky for this scrape) when configured.
+     *
+     * Unlike Node 18, PHP/cURL applies CURLOPT_SSL_CIPHER_LIST to the SAT TLS
+     * handshake THROUGH the proxy tunnel, so the 1024-bit DH ("dh key too
+     * small") is handled with no extra process flags.
+     */
+    private function buildScraper(Credential $credential): void
+    {
+        // Retry middleware: same-IP retries for transient connection/5xx blips.
+        $stack = \GuzzleHttp\HandlerStack::create();
+        $stack->push(\GuzzleHttp\Middleware::retry(function ($retries, $request, $response, $exception) {
+            if ($retries >= 3) {
+                return false;
+            }
+            if ($exception instanceof \GuzzleHttp\Exception\ConnectException) {
+                return true;
+            }
+            if ($response && $response->getStatusCode() >= 500) {
+                return true;
+            }
+            return false;
+        }, function ($retries) {
+            return 1000 * pow(2, $retries); // exponential backoff
+        }));
+
+        // TLS: SAT / GlobalSign chain often fails with VERIFY=true alone (cURL 60). Match
+        // phpcfdi + Mozilla bundle + GlobalSign OV intermediate (see sat-cfdi-api scraper).
+        $verify = $this->resolveSatTlsVerify();
+
+        $config = [
+            'handler' => $stack,
+            RequestOptions::CONNECT_TIMEOUT => 90,
+            RequestOptions::TIMEOUT => 600,
+            RequestOptions::HTTP_ERRORS => true,
+            RequestOptions::VERIFY => $verify,
+            'curl' => [
+                CURLOPT_SSL_CIPHER_LIST => 'DEFAULT@SECLEVEL=1',
+            ],
+        ];
+
+        // WEB mode only: egress through a different Mexican residential IP per
+        // scrape so the SAT never rate-limits a single server IP.
+        $proxyUrl = WebshareProxy::stickyUrl();
+        if ($proxyUrl !== null) {
+            $config[RequestOptions::PROXY] = $proxyUrl;
+            Log::info('SAT Proxy: scraper routed through Webshare', [
+                'proxy' => WebshareProxy::mask($proxyUrl),
+            ]);
+        }
+
+        $client = new Client($config);
+        $httpGateway = new SatHttpGateway($client);
+        $sessionManager = FielSessionManager::create($credential);
+
+        $this->scraper = new SatScraper($sessionManager, $httpGateway);
+    }
+
+    /**
+     * Run a scrape operation, retrying on a DIFFERENT Webshare IP (re-login)
+     * when it fails with a SAT/HTTP error (likely throttle or a bad IP). Only
+     * retries when a proxy is configured; otherwise runs once.
+     *
+     * @template T
+     * @param  callable():T  $operation
+     * @return T
+     */
+    private function withProxyRetry(callable $operation)
+    {
+        $maxAttempts = WebshareProxy::enabled()
+            ? max(1, (int) config('sat.webshare_retries', 3))
+            : 1;
+
+        $lastError = null;
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                return $operation();
+            } catch (Throwable $e) {
+                $lastError = $e;
+                if ($attempt === $maxAttempts || !$this->isRetryableProxyError($e)) {
+                    throw $e;
+                }
+                Log::warning("SAT Proxy: scrape attempt {$attempt}/{$maxAttempts} failed, retrying with a new IP", [
+                    'error' => $e->getMessage(),
+                ]);
+                $this->rebuildScraperWithNewIp();
+            }
+        }
+
+        throw $lastError; // unreachable
+    }
+
+    /** Errors worth retrying from a fresh residential IP. */
+    private function isRetryableProxyError(Throwable $e): bool
+    {
+        return $e instanceof LoginException
+            || $e instanceof SatHttpGatewayException
+            || $e instanceof \GuzzleHttp\Exception\ConnectException
+            || $e instanceof \GuzzleHttp\Exception\RequestException;
+    }
+
+    /** Rebuild the scraper so the next attempt logs in through a new sticky IP. */
+    private function rebuildScraperWithNewIp(): void
+    {
+        if ($this->certificateContent === null) {
+            return;
+        }
+        $credential = Credential::create(
+            $this->certificateContent,
+            $this->privateKeyContent,
+            $this->passphrase
+        );
+        $this->buildScraper($credential);
     }
 
     /**
@@ -192,21 +283,23 @@ class SatProxyService
         }
 
         try {
-            $since = new DateTimeImmutable($startDate);
-            $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
+            return $this->withProxyRetry(function () use ($startDate, $endDate, $downloadType, $stateVoucher) {
+                $since = new DateTimeImmutable($startDate);
+                $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
 
-            // Handle 'ambos' by making two queries
-            if ($downloadType === 'ambos') {
-                $emitidos = $this->querySingleType($since, $until, 'emitidos', $stateVoucher);
-                $recibidos = $this->querySingleType($since, $until, 'recibidos', $stateVoucher);
-                
-                $combined = array_merge($emitidos ?? [], $recibidos ?? []);
-                $this->messages[] = "Found " . count($combined) . " CFDIs (emitidos + recibidos)";
-                return $combined;
-            }
+                // Handle 'ambos' by making two queries
+                if ($downloadType === 'ambos') {
+                    $emitidos = $this->querySingleType($since, $until, 'emitidos', $stateVoucher);
+                    $recibidos = $this->querySingleType($since, $until, 'recibidos', $stateVoucher);
 
-            return $this->querySingleType($since, $until, $downloadType, $stateVoucher);
-        } catch (Exception $e) {
+                    $combined = array_merge($emitidos ?? [], $recibidos ?? []);
+                    $this->messages[] = "Found " . count($combined) . " CFDIs (emitidos + recibidos)";
+                    return $combined;
+                }
+
+                return $this->querySingleType($since, $until, $downloadType, $stateVoucher);
+            });
+        } catch (Throwable $e) {
             $this->errors[] = 'Query error: ' . $e->getMessage();
             Log::error('SAT Proxy Query Error', ['error' => $e->getMessage()]);
             return null;
@@ -267,21 +360,22 @@ class SatProxyService
         }
 
         try {
-            $since = new DateTimeImmutable($startDate);
-            $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
+            return $this->withProxyRetry(function () use ($startDate, $endDate, $downloadType, $stateVoucher, $resourceTypes) {
+                $since = new DateTimeImmutable($startDate);
+                $until = (new DateTimeImmutable($endDate))->setTime(23, 59, 59);
 
-            // Handle 'ambos' by making two queries
-            if ($downloadType === 'ambos') {
-                $emitidos = $this->downloadSingleType($since, $until, 'emitidos', $stateVoucher, $resourceTypes);
-                $recibidos = $this->downloadSingleType($since, $until, 'recibidos', $stateVoucher, $resourceTypes);
-                
-                $combined = array_merge($emitidos ?? [], $recibidos ?? []);
-                $this->messages[] = "Downloaded " . count($combined) . " files (emitidos + recibidos)";
-                return $combined;
-            }
+                // Handle 'ambos' by making two queries
+                if ($downloadType === 'ambos') {
+                    $emitidos = $this->downloadSingleType($since, $until, 'emitidos', $stateVoucher, $resourceTypes);
+                    $recibidos = $this->downloadSingleType($since, $until, 'recibidos', $stateVoucher, $resourceTypes);
 
-            return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes);
-            
+                    $combined = array_merge($emitidos ?? [], $recibidos ?? []);
+                    $this->messages[] = "Downloaded " . count($combined) . " files (emitidos + recibidos)";
+                    return $combined;
+                }
+
+                return $this->downloadSingleType($since, $until, $downloadType, $stateVoucher, $resourceTypes);
+            });
         } catch (Throwable $e) {
             $this->errors[] = 'Download error: ' . $e->getMessage();
             
@@ -353,23 +447,24 @@ class SatProxyService
         }
 
         try {
-            $type = $downloadType === 'recibidos' 
-                ? DownloadType::recibidos() 
-                : DownloadType::emitidos();
+            return $this->withProxyRetry(function () use ($uuids, $downloadType, $resourceTypes) {
+                $type = $downloadType === 'recibidos'
+                    ? DownloadType::recibidos()
+                    : DownloadType::emitidos();
 
-            $list = $this->scraper->listByUuids($uuids, $type);
-            
-            if ($list->count() === 0) {
-                $this->messages[] = 'No CFDIs found for the provided UUIDs';
-                return [];
-            }
+                $list = $this->scraper->listByUuids($uuids, $type);
 
-            // Ensure session is alive
-            $this->scraper->confirmSessionIsAlive();
-            
-            return $this->downloadToMemory($list, $resourceTypes);
-            
-        } catch (Exception $e) {
+                if ($list->count() === 0) {
+                    $this->messages[] = 'No CFDIs found for the provided UUIDs';
+                    return [];
+                }
+
+                // Ensure session is alive
+                $this->scraper->confirmSessionIsAlive();
+
+                return $this->downloadToMemory($list, $resourceTypes);
+            });
+        } catch (Throwable $e) {
             $this->errors[] = 'Download error: ' . $e->getMessage();
             Log::error('SAT Proxy UUID Download Error', ['error' => $e->getMessage()]);
             return null;
