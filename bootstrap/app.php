@@ -15,8 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Rate limiting: 60 requests per minute by default
-        $middleware->throttleApi('60,1');
+        $middleware->throttleApi('600,1');
         
         // CSRF exempt for API routes
         $middleware->validateCsrfTokens(except: [
