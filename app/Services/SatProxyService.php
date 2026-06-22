@@ -117,8 +117,13 @@ class SatProxyService
      * Unlike Node 18, PHP/cURL applies CURLOPT_SSL_CIPHER_LIST to the SAT TLS
      * handshake THROUGH the proxy tunnel, so the 1024-bit DH ("dh key too
      * small") is handled with no extra process flags.
+     *
+     * @param  bool  $useProxy  When false, skip the Webshare tunnel and egress
+     *                          from the server's own IP — used by the fallback
+     *                          when Webshare is unreachable (quota exhausted,
+     *                          credentials expired, 402 tunnel rejected).
      */
-    private function buildScraper(Credential $credential): void
+    private function buildScraper(Credential $credential, bool $useProxy = true): void
     {
         // Retry middleware: same-IP retries for transient connection/5xx blips.
         $stack = \GuzzleHttp\HandlerStack::create();
@@ -154,12 +159,14 @@ class SatProxyService
 
         // WEB mode only: egress through a different Mexican residential IP per
         // scrape so the SAT never rate-limits a single server IP.
-        $proxyUrl = WebshareProxy::stickyUrl();
+        $proxyUrl = $useProxy ? WebshareProxy::stickyUrl() : null;
         if ($proxyUrl !== null) {
             $config[RequestOptions::PROXY] = $proxyUrl;
             Log::info('SAT Proxy: scraper routed through Webshare', [
                 'proxy' => WebshareProxy::mask($proxyUrl),
             ]);
+        } elseif (!$useProxy) {
+            Log::info('SAT Proxy: scraper using direct server IP (Webshare fallback)');
         }
 
         $client = new Client($config);
@@ -174,13 +181,23 @@ class SatProxyService
      * when it fails with a SAT/HTTP error (likely throttle or a bad IP). Only
      * retries when a proxy is configured; otherwise runs once.
      *
+     * If a proxy tunnel error is detected (402 quota exhausted, 407 auth
+     * required, "CONNECT tunnel failed"), the fallback runs immediately
+     * without burning the remaining Webshare retries — Webshare is down for
+     * this account, no IP rotation will help.
+     *
+     * After ALL Webshare retries are exhausted, a final attempt is made
+     * WITHOUT the proxy (direct from server IP). Trades the per-IP rate
+     * limit risk for keeping Web mode usable when Webshare is down.
+     *
      * @template T
      * @param  callable():T  $operation
      * @return T
      */
     private function withProxyRetry(callable $operation)
     {
-        $maxAttempts = WebshareProxy::enabled()
+        $proxyEnabled = WebshareProxy::enabled();
+        $maxAttempts = $proxyEnabled
             ? max(1, (int) config('sat.webshare_retries', 3))
             : 1;
 
@@ -190,7 +207,27 @@ class SatProxyService
                 return $operation();
             } catch (Throwable $e) {
                 $lastError = $e;
-                if ($attempt === $maxAttempts || !$this->isRetryableProxyError($e)) {
+
+                // Webshare tunnel down (402/407/CONNECT) → no point rotating IPs,
+                // jump straight to direct-IP fallback.
+                if ($proxyEnabled && $this->isProxyTunnelError($e)) {
+                    Log::warning('SAT Proxy: Webshare tunnel rejected (likely quota/credentials), falling back to direct IP', [
+                        'error' => $e->getMessage(),
+                    ]);
+                    return $this->runWithoutProxy($operation);
+                }
+
+                if (!$this->isRetryableProxyError($e)) {
+                    throw $e;
+                }
+                if ($attempt === $maxAttempts) {
+                    // Last Webshare attempt exhausted — try direct IP as last resort.
+                    if ($proxyEnabled) {
+                        Log::warning("SAT Proxy: {$maxAttempts} Webshare attempts failed, falling back to direct IP", [
+                            'error' => $e->getMessage(),
+                        ]);
+                        return $this->runWithoutProxy($operation);
+                    }
                     throw $e;
                 }
                 Log::warning("SAT Proxy: scrape attempt {$attempt}/{$maxAttempts} failed, retrying with a new IP", [
@@ -212,6 +249,31 @@ class SatProxyService
             || $e instanceof \GuzzleHttp\Exception\RequestException;
     }
 
+    /**
+     * The Webshare tunnel itself is rejecting us — quota exhausted (402),
+     * proxy auth required (407), or the CONNECT handshake failed entirely.
+     * Rotating IPs won't help; only a direct-IP fallback will.
+     */
+    private function isProxyTunnelError(Throwable $e): bool
+    {
+        // Walk the exception chain — phpcfdi wraps Guzzle's "CONNECT tunnel failed"
+        // inside a generic "Connection error when try to login using FIEL", so the
+        // tunnel-level detail only appears in $e->getPrevious()->...
+        for ($cur = $e; $cur !== null; $cur = $cur->getPrevious()) {
+            $msg = $cur->getMessage();
+            if (preg_match('/CONNECT tunnel failed, response (402|407|403)/i', $msg)) {
+                return true;
+            }
+            if (stripos($msg, 'proxy') !== false
+                && (stripos($msg, 'tunnel') !== false
+                    || stripos($msg, 'authentication required') !== false
+                    || stripos($msg, 'could not resolve') !== false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Rebuild the scraper so the next attempt logs in through a new sticky IP. */
     private function rebuildScraperWithNewIp(): void
     {
@@ -224,6 +286,24 @@ class SatProxyService
             $this->passphrase
         );
         $this->buildScraper($credential);
+    }
+
+    /**
+     * Last-resort fallback: rebuild the scraper WITHOUT the Webshare tunnel
+     * (egress from the server's own IP) and run the operation once.
+     */
+    private function runWithoutProxy(callable $operation)
+    {
+        if ($this->certificateContent === null) {
+            throw new Exception('Cannot fall back to direct IP: FIEL credentials not available in memory');
+        }
+        $credential = Credential::create(
+            $this->certificateContent,
+            $this->privateKeyContent,
+            $this->passphrase
+        );
+        $this->buildScraper($credential, useProxy: false);
+        return $operation();
     }
 
     /**
